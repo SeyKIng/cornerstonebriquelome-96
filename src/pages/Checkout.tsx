@@ -146,6 +146,7 @@ const Checkout = () => {
 
       console.log('Payment response:', response);
 
+      // Gérer les erreurs de la fonction Edge
       if (response.error) {
         console.error('Payment error:', response.error);
         setErrorDetails(response.error.message || 'Erreur inconnue');
@@ -154,6 +155,13 @@ const Checkout = () => {
 
       const result = response.data;
       
+      // Vérifier si la réponse indique un succès
+      if (!result.success) {
+        console.error('Payment failed:', result);
+        setErrorDetails(result.error || result.details || 'Erreur inconnue');
+        throw new Error(result.error || 'Erreur lors de l\'initiation du paiement');
+      }
+
       if (result.success && result.transaction) {
         setCurrentTransaction(result.transaction);
         setTransactionStatus('processing');
@@ -173,7 +181,7 @@ const Checkout = () => {
               }
             });
 
-            if (statusResponse.data?.transaction) {
+            if (statusResponse.data?.success && statusResponse.data?.transaction) {
               const updatedTransaction = statusResponse.data.transaction;
               setCurrentTransaction(updatedTransaction);
               

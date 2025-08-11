@@ -7,15 +7,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-const SEMOA_CONFIG = {
-  client_id: 'cashpay',
-  client_secret: 'HpuNOm3sDOkAvd8v3UCIxiBu68634BBs',
-  username: 'api_cashpay.corner',
-  password: 'qH5VlCDCa4',
-  apikey: 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
-  baseUrl: 'https://api.semoa-payments.ovh/sandbox'
-};
-
 serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -37,17 +28,29 @@ serve(async (req) => {
       case 'check_status':
         return await checkPaymentStatus(supabase, payload.transaction_id);
       default:
-        throw new Error('Invalid action');
+        return new Response(
+          JSON.stringify({ 
+            success: false,
+            error: 'Invalid action',
+            code: 'INVALID_ACTION'
+          }),
+          { 
+            status: 200, 
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+          }
+        );
     }
   } catch (error) {
     console.error('Error:', error);
     return new Response(
       JSON.stringify({ 
+        success: false,
         error: error.message,
+        code: 'SERVER_ERROR',
         details: 'Erreur lors du traitement de la demande'
       }),
       { 
-        status: 400, 
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
@@ -57,9 +60,18 @@ serve(async (req) => {
 async function getAccessToken() {
   console.log('Getting Semoa access token...');
   
+  // Utiliser les secrets Supabase
+  const SEMOA_CONFIG = {
+    client_id: Deno.env.get('SEMOA_CLIENT_ID') || 'cashpay',
+    client_secret: Deno.env.get('SEMOA_CLIENT_SECRET') || 'HpuNOm3sDOkAvd8v3UCIxiBu68634BBs',
+    username: Deno.env.get('SEMOA_USERNAME') || 'api_cashpay.corner',
+    password: Deno.env.get('SEMOA_PASSWORD') || 'qH5VlCDCa4',
+    apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
+    baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+  };
+  
   const tokenUrl = `${SEMOA_CONFIG.baseUrl}/oauth/token`;
   
-  // Préparer les données pour l'authentification en utilisant application/x-www-form-urlencoded
   const authParams = new URLSearchParams({
     grant_type: 'password',
     client_id: SEMOA_CONFIG.client_id,
@@ -135,14 +147,52 @@ async function initiatePayment(supabase: any, payload: any) {
 
     if (dbError) {
       console.error('Database error:', dbError);
-      throw new Error(`Database error: ${dbError.message}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: `Database error: ${dbError.message}`,
+          code: 'DATABASE_ERROR'
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
     console.log('Transaction created:', transaction);
 
     // Obtenir le token d'accès
-    const accessToken = await getAccessToken();
-    console.log('Got access token successfully');
+    let accessToken;
+    try {
+      accessToken = await getAccessToken();
+      console.log('Got access token successfully');
+    } catch (tokenError) {
+      console.error('Token error:', tokenError);
+      
+      // Mettre à jour le statut de la transaction
+      await supabase
+        .from('semoa_transactions')
+        .update({ 
+          status: 'failed', 
+          semoa_response: { error: tokenError.message },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', transaction.id);
+
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Erreur d\'authentification avec Semoa',
+          code: 'AUTH_ERROR',
+          details: tokenError.message
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
+    }
     
     // Mapper les méthodes de paiement selon l'API Semoa
     const providerMap: { [key: string]: string } = {
@@ -169,42 +219,76 @@ async function initiatePayment(supabase: any, payload: any) {
     console.log('Payment request data:', paymentData);
 
     // Effectuer l'appel à l'API Semoa
-    const paymentResponse = await fetch(`${SEMOA_CONFIG.baseUrl}/payment/mobile-money`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`,
-        'X-API-KEY': SEMOA_CONFIG.apikey,
-        'Accept': 'application/json',
-        'User-Agent': 'Cornerstone-Briques/1.0',
-      },
-      body: JSON.stringify(paymentData),
-    });
-
-    console.log('Payment response status:', paymentResponse.status);
-    console.log('Payment response headers:', Object.fromEntries(paymentResponse.headers.entries()));
-    
-    const responseText = await paymentResponse.text();
-    console.log('Payment response text:', responseText);
-
+    let paymentResponse;
     let responseData;
+    
     try {
-      responseData = JSON.parse(responseText);
-    } catch (parseError) {
-      console.error('Failed to parse payment response:', parseError);
-      responseData = { raw_response: responseText, error: 'Invalid JSON response' };
+      const SEMOA_CONFIG = {
+        apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
+        baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+      };
+
+      paymentResponse = await fetch(`${SEMOA_CONFIG.baseUrl}/payment/mobile-money`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
+          'X-API-KEY': SEMOA_CONFIG.apikey,
+          'Accept': 'application/json',
+          'User-Agent': 'Cornerstone-Briques/1.0',
+        },
+        body: JSON.stringify(paymentData),
+      });
+
+      console.log('Payment response status:', paymentResponse.status);
+      
+      const responseText = await paymentResponse.text();
+      console.log('Payment response text:', responseText);
+
+      try {
+        responseData = JSON.parse(responseText);
+      } catch (parseError) {
+        console.error('Failed to parse payment response:', parseError);
+        responseData = { raw_response: responseText, error: 'Invalid JSON response' };
+      }
+
+      console.log('Parsed payment response data:', responseData);
+
+      // Logger l'appel API
+      await supabase.from('semoa_api_logs').insert({
+        transaction_id: transaction.id,
+        endpoint: '/payment/mobile-money',
+        request_data: paymentData,
+        response_data: responseData,
+        status_code: paymentResponse.status
+      });
+
+    } catch (paymentError) {
+      console.error('Payment request failed:', paymentError);
+      
+      // Mettre à jour le statut de la transaction
+      await supabase
+        .from('semoa_transactions')
+        .update({ 
+          status: 'failed', 
+          semoa_response: { error: paymentError.message },
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', transaction.id);
+
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Erreur lors de l\'appel à Semoa',
+          code: 'PAYMENT_ERROR',
+          details: paymentError.message
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
-
-    console.log('Parsed payment response data:', responseData);
-
-    // Logger l'appel API
-    await supabase.from('semoa_api_logs').insert({
-      transaction_id: transaction.id,
-      endpoint: '/payment/mobile-money',
-      request_data: paymentData,
-      response_data: responseData,
-      status_code: paymentResponse.status
-    });
 
     if (!paymentResponse.ok) {
       // Mettre à jour le statut de la transaction
@@ -217,7 +301,19 @@ async function initiatePayment(supabase: any, payload: any) {
         })
         .eq('id', transaction.id);
 
-      throw new Error(`Payment initiation failed: ${responseData.message || responseData.error || responseText}`);
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: `Payment initiation failed: ${responseData.message || responseData.error || 'Unknown error'}`,
+          code: 'SEMOA_ERROR',
+          upstreamStatus: paymentResponse.status,
+          upstreamBody: responseData
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
     // Mettre à jour la transaction avec la réponse Semoa
@@ -237,35 +333,23 @@ async function initiatePayment(supabase: any, payload: any) {
         transaction: { ...transaction, semoa_response: responseData },
         message: 'Paiement initié avec succès'
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { 
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     );
 
   } catch (error) {
     console.error('Payment error:', error);
     
-    // Mettre à jour le statut en cas d'erreur si la transaction existe
-    if (payload.transaction_id) {
-      try {
-        await supabase
-          .from('semoa_transactions')
-          .update({ 
-            status: 'failed',
-            semoa_response: { error: error.message },
-            updated_at: new Date().toISOString()
-          })
-          .eq('id', payload.transaction_id);
-      } catch (updateError) {
-        console.error('Failed to update transaction status:', updateError);
-      }
-    }
-
     return new Response(
       JSON.stringify({ 
+        success: false,
         error: error.message,
-        success: false
+        code: 'UNEXPECTED_ERROR'
       }),
       { 
-        status: 400, 
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
@@ -284,13 +368,28 @@ async function checkPaymentStatus(supabase: any, transactionId: string) {
 
     if (error || !transaction) {
       console.error('Transaction not found:', error);
-      throw new Error('Transaction not found');
+      return new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Transaction not found',
+          code: 'NOT_FOUND'
+        }),
+        { 
+          status: 200, 
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+        }
+      );
     }
 
     // Si on a un transaction_id Semoa, vérifier le statut
     if (transaction.transaction_id) {
       try {
         const accessToken = await getAccessToken();
+        
+        const SEMOA_CONFIG = {
+          apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
+          baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+        };
         
         const statusResponse = await fetch(`${SEMOA_CONFIG.baseUrl}/payment/status/${transaction.transaction_id}`, {
           headers: {
@@ -327,21 +426,25 @@ async function checkPaymentStatus(supabase: any, transactionId: string) {
 
     return new Response(
       JSON.stringify({ 
-        transaction,
-        success: true
+        success: true,
+        transaction
       }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      { 
+        status: 200,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
+      }
     );
     
   } catch (error) {
     console.error('Status check error:', error);
     return new Response(
       JSON.stringify({ 
+        success: false,
         error: error.message,
-        success: false
+        code: 'STATUS_ERROR'
       }),
       { 
-        status: 400, 
+        status: 200, 
         headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
       }
     );
