@@ -148,8 +148,8 @@ const Checkout = () => {
 
       // Gérer les erreurs de la fonction Edge
       if (response.error) {
-        console.error('Payment error:', response.error);
-        setErrorDetails(response.error.message || 'Erreur inconnue');
+        console.error('Edge Function error:', response.error);
+        setErrorDetails(response.error.message || 'Erreur Edge Function');
         throw new Error(response.error.message || 'Erreur lors de l\'initiation du paiement');
       }
 
@@ -158,8 +158,9 @@ const Checkout = () => {
       // Vérifier si la réponse indique un succès
       if (!result.success) {
         console.error('Payment failed:', result);
-        setErrorDetails(result.error || result.details || 'Erreur inconnue');
-        throw new Error(result.error || 'Erreur lors de l\'initiation du paiement');
+        const errorMsg = result.error || result.details || 'Erreur inconnue';
+        setErrorDetails(`Code: ${result.code || 'UNKNOWN'} - ${errorMsg}`);
+        throw new Error(errorMsg);
       }
 
       if (result.success && result.transaction) {

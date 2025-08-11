@@ -57,9 +57,17 @@ serve(async (req) => {
   }
 });
 
-async function getAccessToken() {
+let tokenCache = { token: null, expiresAt: 0 };
+
+async function fetchAccessToken() {
   console.log('Getting Semoa access token...');
   
+  const now = Date.now();
+  if (tokenCache.token && tokenCache.expiresAt > now) {
+    console.log('Using cached token');
+    return tokenCache.token;
+  }
+
   // Utiliser les secrets Supabase
   const SEMOA_CONFIG = {
     client_id: Deno.env.get('SEMOA_CLIENT_ID') || 'cashpay',
@@ -88,7 +96,6 @@ async function getAccessToken() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
-        'X-API-KEY': SEMOA_CONFIG.apikey,
         'Accept': 'application/json',
         'User-Agent': 'Cornerstone-Briques/1.0',
       },
@@ -115,14 +122,79 @@ async function getAccessToken() {
     
     console.log('Parsed token data:', data);
     
-    if (!data.access_token) {
+    const token = data.access_token || data.token;
+    if (!token) {
       throw new Error(`No access token in response: ${JSON.stringify(data)}`);
     }
     
-    return data.access_token;
+    const expiresIn = parseInt(data.expires_in || '3600', 10);
+    tokenCache = { 
+      token, 
+      expiresAt: Date.now() + expiresIn * 1000 - 5000 // 5s buffer
+    };
+    
+    console.log('Token cached successfully, expires in:', expiresIn);
+    return token;
   } catch (error) {
     console.error('Token request failed:', error);
     throw new Error(`Authentication failed: ${error.message}`);
+  }
+}
+
+async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) {
+  console.log('Creating Semoa payment:', { phoneNumber, amount, service });
+  
+  const token = await fetchAccessToken();
+  
+  const SEMOA_CONFIG = {
+    baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+  };
+  
+  const paymentData = {
+    phoneNumber,
+    amount: parseInt(amount.toString(), 10),
+    currency: 'XOF',
+    service
+  };
+
+  console.log('Payment request data:', paymentData);
+
+  try {
+    const response = await fetch(`${SEMOA_CONFIG.baseUrl}/v1/payments`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+        'User-Agent': 'Cornerstone-Briques/1.0',
+      },
+      body: JSON.stringify(paymentData),
+    });
+
+    console.log('Payment response status:', response.status);
+    console.log('Payment response headers:', Object.fromEntries(response.headers.entries()));
+    
+    const responseText = await response.text();
+    console.log('Payment response text:', responseText);
+
+    let responseData;
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      console.error('Failed to parse payment response:', parseError);
+      responseData = { raw_response: responseText, error: 'Invalid JSON response' };
+    }
+
+    console.log('Parsed payment response data:', responseData);
+
+    if (!response.ok) {
+      throw new Error(`Payment request failed: ${response.status} - ${responseText}`);
+    }
+
+    return responseData;
+  } catch (error) {
+    console.error('Payment request failed:', error);
+    throw new Error(`Payment creation failed: ${error.message}`);
   }
 }
 
@@ -162,116 +234,54 @@ async function initiatePayment(supabase: any, payload: any) {
 
     console.log('Transaction created:', transaction);
 
-    // Obtenir le token d'accès
-    let accessToken;
+    // Obtenir le token d'accès et effectuer le paiement
+    let semoaResponse;
     try {
-      accessToken = await getAccessToken();
-      console.log('Got access token successfully');
-    } catch (tokenError) {
-      console.error('Token error:', tokenError);
-      
-      // Mettre à jour le statut de la transaction
-      await supabase
-        .from('semoa_transactions')
-        .update({ 
-          status: 'failed', 
-          semoa_response: { error: tokenError.message },
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', transaction.id);
-
-      return new Response(
-        JSON.stringify({ 
-          success: false,
-          error: 'Erreur d\'authentification avec Semoa',
-          code: 'AUTH_ERROR',
-          details: tokenError.message
-        }),
-        { 
-          status: 200, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      );
-    }
-    
-    // Mapper les méthodes de paiement selon l'API Semoa
-    const providerMap: { [key: string]: string } = {
-      'tmoney': 'TMONEY',
-      'flooz': 'FLOOZ',
-      'airtel': 'AIRTEL_MONEY',
-      'mtn': 'MTN_MOMO'
-    };
-    
-    const provider = providerMap[payment_method.toLowerCase()] || 'TMONEY';
-    
-    // Préparer les données de paiement selon l'API Semoa
-    const paymentData = {
-      amount: parseFloat(amount),
-      currency: 'XOF',
-      phone: phone_number,
-      provider: provider,
-      reference: transaction.id,
-      description: `Commande Cornerstone Briques - ${transaction.id.substring(0, 8)}`,
-      callback_url: `${Deno.env.get('SUPABASE_URL')}/functions/v1/semoa-payment-callback`,
-      return_url: `${Deno.env.get('SUPABASE_URL')}/paiement/success`
-    };
-
-    console.log('Payment request data:', paymentData);
-
-    // Effectuer l'appel à l'API Semoa
-    let paymentResponse;
-    let responseData;
-    
-    try {
-      const SEMOA_CONFIG = {
-        apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
-        baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+      // Mapper les méthodes de paiement selon l'API Semoa
+      const serviceMap: { [key: string]: string } = {
+        'tmoney': 'T-MONEY',
+        'flooz': 'FLOOZ',
+        'airtel': 'AIRTEL_MONEY',
+        'mtn': 'MTN_MOMO'
       };
-
-      paymentResponse = await fetch(`${SEMOA_CONFIG.baseUrl}/payment/mobile-money`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-          'X-API-KEY': SEMOA_CONFIG.apikey,
-          'Accept': 'application/json',
-          'User-Agent': 'Cornerstone-Briques/1.0',
-        },
-        body: JSON.stringify(paymentData),
+      
+      const service = serviceMap[payment_method.toLowerCase()] || 'T-MONEY';
+      
+      semoaResponse = await createSemoaPayment({
+        phoneNumber: phone_number,
+        amount: parseFloat(amount),
+        service: service
       });
 
-      console.log('Payment response status:', paymentResponse.status);
-      
-      const responseText = await paymentResponse.text();
-      console.log('Payment response text:', responseText);
-
-      try {
-        responseData = JSON.parse(responseText);
-      } catch (parseError) {
-        console.error('Failed to parse payment response:', parseError);
-        responseData = { raw_response: responseText, error: 'Invalid JSON response' };
-      }
-
-      console.log('Parsed payment response data:', responseData);
+      console.log('Semoa payment created successfully:', semoaResponse);
 
       // Logger l'appel API
       await supabase.from('semoa_api_logs').insert({
         transaction_id: transaction.id,
-        endpoint: '/payment/mobile-money',
-        request_data: paymentData,
-        response_data: responseData,
-        status_code: paymentResponse.status
+        endpoint: '/v1/payments',
+        request_data: { phoneNumber: phone_number, amount: parseFloat(amount), service },
+        response_data: semoaResponse,
+        status_code: 200
       });
 
-    } catch (paymentError) {
-      console.error('Payment request failed:', paymentError);
+    } catch (semoaError) {
+      console.error('Semoa error:', semoaError);
+      
+      // Logger l'erreur
+      await supabase.from('semoa_api_logs').insert({
+        transaction_id: transaction.id,
+        endpoint: '/v1/payments',
+        request_data: { phoneNumber: phone_number, amount: parseFloat(amount) },
+        response_data: { error: semoaError.message },
+        status_code: 500
+      });
       
       // Mettre à jour le statut de la transaction
       await supabase
         .from('semoa_transactions')
         .update({ 
           status: 'failed', 
-          semoa_response: { error: paymentError.message },
+          semoa_response: { error: semoaError.message },
           updated_at: new Date().toISOString()
         })
         .eq('id', transaction.id);
@@ -280,34 +290,8 @@ async function initiatePayment(supabase: any, payload: any) {
         JSON.stringify({ 
           success: false,
           error: 'Erreur lors de l\'appel à Semoa',
-          code: 'PAYMENT_ERROR',
-          details: paymentError.message
-        }),
-        { 
-          status: 200, 
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' } 
-        }
-      );
-    }
-
-    if (!paymentResponse.ok) {
-      // Mettre à jour le statut de la transaction
-      await supabase
-        .from('semoa_transactions')
-        .update({ 
-          status: 'failed', 
-          semoa_response: responseData,
-          updated_at: new Date().toISOString()
-        })
-        .eq('id', transaction.id);
-
-      return new Response(
-        JSON.stringify({ 
-          success: false,
-          error: `Payment initiation failed: ${responseData.message || responseData.error || 'Unknown error'}`,
           code: 'SEMOA_ERROR',
-          upstreamStatus: paymentResponse.status,
-          upstreamBody: responseData
+          details: semoaError.message
         }),
         { 
           status: 200, 
@@ -317,12 +301,15 @@ async function initiatePayment(supabase: any, payload: any) {
     }
 
     // Mettre à jour la transaction avec la réponse Semoa
+    const semoaOrderNum = semoaResponse.orderNum || semoaResponse.order_number || semoaResponse.reference || semoaResponse.id;
+    const semoaStatus = (semoaResponse.state === 4 || semoaResponse.status === 'success') ? 'completed' : 'processing';
+
     await supabase
       .from('semoa_transactions')
       .update({ 
-        transaction_id: responseData.transaction_id || responseData.id || responseData.reference,
-        semoa_response: responseData,
-        status: responseData.status || 'processing',
+        transaction_id: semoaOrderNum,
+        semoa_response: semoaResponse,
+        status: semoaStatus,
         updated_at: new Date().toISOString()
       })
       .eq('id', transaction.id);
@@ -330,7 +317,7 @@ async function initiatePayment(supabase: any, payload: any) {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        transaction: { ...transaction, semoa_response: responseData },
+        transaction: { ...transaction, semoa_response: semoaResponse, status: semoaStatus },
         message: 'Paiement initié avec succès'
       }),
       { 
@@ -381,49 +368,8 @@ async function checkPaymentStatus(supabase: any, transactionId: string) {
       );
     }
 
-    // Si on a un transaction_id Semoa, vérifier le statut
-    if (transaction.transaction_id) {
-      try {
-        const accessToken = await getAccessToken();
-        
-        const SEMOA_CONFIG = {
-          apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
-          baseUrl: 'https://api.semoa-payments.ovh/sandbox'
-        };
-        
-        const statusResponse = await fetch(`${SEMOA_CONFIG.baseUrl}/payment/status/${transaction.transaction_id}`, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'X-API-KEY': SEMOA_CONFIG.apikey,
-            'Accept': 'application/json',
-            'User-Agent': 'Cornerstone-Briques/1.0',
-          },
-        });
-
-        if (statusResponse.ok) {
-          const statusData = await statusResponse.json();
-          console.log('Status response:', statusData);
-          
-          // Mettre à jour le statut si nécessaire
-          if (statusData.status && statusData.status !== transaction.status) {
-            await supabase
-              .from('semoa_transactions')
-              .update({ 
-                status: statusData.status,
-                semoa_response: { ...transaction.semoa_response, ...statusData },
-                updated_at: new Date().toISOString()
-              })
-              .eq('id', transaction.id);
-            
-            transaction.status = statusData.status;
-            transaction.semoa_response = { ...transaction.semoa_response, ...statusData };
-          }
-        }
-      } catch (error) {
-        console.error('Error checking payment status:', error);
-      }
-    }
-
+    // Si on a un transaction_id Semoa, on peut potentiellement vérifier le statut
+    // Pour l'instant, on retourne juste le statut local
     return new Response(
       JSON.stringify({ 
         success: true,
