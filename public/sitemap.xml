@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <!-- Page d'accueil -->
+  <url>
+    <loc>https://cornerstonebrique.com/</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>1.0</priority>
+  </url>
+
+  <!-- Nos produits -->
+  <url>
+    <loc>https://cornerstonebrique.com/nos-produits</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.9</priority>
+  </url>
+
+  <!-- Galerie -->
+  <url>
+    <loc>https://cornerstonebrique.com/galerie</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- Avis -->
+  <url>
+    <loc>https://cornerstonebrique.com/avis</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.8</priority>
+  </url>
+
+  <!-- À propros (si « a pros » correspond à une page spécifique) -->
+  <url>
+    <loc>https://cornerstonebrique.com/a-propos</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Contact -->
+  <url>
+    <loc>https://cornerstonebrique.com/contact</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Suivi -->
+  <url>
+    <loc>https://cornerstonebrique.com/suivi</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Service -->
+  <url>
+    <loc>https://cornerstonebrique.com/service</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Commander -->
+  <url>
+    <loc>https://cornerstonebrique.com/commander</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.7</priority>
+  </url>
+
+  <!-- Mon compte -->
+  <url>
+    <loc>https://cornerstonebrique.com/mon-compte</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.6</priority>
+  </url>
+
+  <!-- Panier -->
+  <url>
+    <loc>https://cornerstonebrique.com/panier</loc>
+    <lastmod>2025-05-08</lastmod>
+    <priority>0.6</priority>
+  </url>
+</urlset>

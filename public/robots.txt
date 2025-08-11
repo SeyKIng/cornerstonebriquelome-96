@@ -1,0 +1,13 @@
+# Robots.txt pour cornerstonebrique.com
+# Créé le 08/05/2025
+
+User-agent: *
+Allow: /
+
+# Bloquer l'exploration de pages sensibles ou privées
+Disallow: /mon-compte
+Disallow: /panier
+Disallow: /commander
+
+# Emplacement du sitemap pour faciliter l'indexation globale
+Sitemap: https://cornerstonebrique.com/sitemap.xml
