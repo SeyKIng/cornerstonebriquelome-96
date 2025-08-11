@@ -160,7 +160,7 @@ async function debugSemoaAuth() {
   }
 }
 
-// Endpoint de debug pour tester le paiement
+// Endpoint de debug pour tester le paiement avec Bearer token
 async function debugSemoaPay() {
   console.log('=== DEBUG SEMOA PAYMENT START ===');
   
@@ -179,9 +179,11 @@ async function debugSemoaPay() {
       });
     }
 
-    const token = authData.response.body.access_token;
+    const accessToken = authData.response.body.access_token;
+    console.log('=== RECEIVED ACCESS TOKEN ===');
+    console.log('Token (first 20 chars):', accessToken.substring(0, 20) + '...');
     
-    // 2. Maintenant tester le paiement
+    // 2. Maintenant tester le paiement avec le Bearer token
     const paymentUrl = 'https://api.semoa-payments.ovh/sandbox/v1/payments';
     const paymentData = {
       phoneNumber: "22890112783",
@@ -200,7 +202,7 @@ async function debugSemoaPay() {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Accept': 'application/json',
         'User-Agent': 'Cornerstone-Briques/1.0',
       },
@@ -225,7 +227,8 @@ async function debugSemoaPay() {
     const debugResult = {
       auth_step: {
         success: true,
-        token_received: !!token
+        token_received: !!accessToken,
+        token_preview: accessToken.substring(0, 20) + '...'
       },
       payment_step: {
         request: {
@@ -233,7 +236,7 @@ async function debugSemoaPay() {
           method: 'POST',
           headers: { 
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${token.substring(0, 10)}...` // Masquer le token complet
+            'Authorization': `Bearer ${accessToken.substring(0, 10)}...` // Masquer le token complet
           },
           body: paymentData
         },
@@ -346,6 +349,7 @@ async function fetchAccessToken() {
     };
     
     console.log('Token cached successfully, expires in:', expiresIn);
+    console.log('Token preview:', token.substring(0, 20) + '...');
     return token;
   } catch (error) {
     console.error('=== TOKEN REQUEST FAILED ===');
@@ -358,7 +362,9 @@ async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) 
   console.log('=== CREATING SEMOA PAYMENT ===');
   console.log('Payment params:', { phoneNumber, amount, service });
   
-  const token = await fetchAccessToken();
+  const accessToken = await fetchAccessToken();
+  console.log('=== USING ACCESS TOKEN FOR PAYMENT ===');
+  console.log('Token preview:', accessToken.substring(0, 20) + '...');
   
   const paymentUrl = 'https://api.semoa-payments.ovh/sandbox/v1/payments';
   
@@ -380,7 +386,7 @@ async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) 
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
+        'Authorization': `Bearer ${accessToken}`,
         'Accept': 'application/json',
         'User-Agent': 'Cornerstone-Briques/1.0',
       },
