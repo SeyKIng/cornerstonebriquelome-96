@@ -1,4 +1,3 @@
-
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -19,7 +18,21 @@ serve(async (req) => {
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
     );
 
+    const url = new URL(req.url);
+    const pathname = url.pathname;
+
+    // Debug endpoint pour test authentification
+    if (pathname.includes('debug-semoa-auth')) {
+      return await debugSemoaAuth();
+    }
+
+    // Debug endpoint pour test paiement
+    if (pathname.includes('debug-semoa-pay')) {
+      return await debugSemoaPay();
+    }
+
     const { action, ...payload } = await req.json();
+    console.log('=== SEMOA PAYMENT REQUEST ===');
     console.log('Received action:', action, 'with payload:', payload);
 
     switch (action) {
@@ -41,6 +54,7 @@ serve(async (req) => {
         );
     }
   } catch (error) {
+    console.error('=== GLOBAL ERROR ===');
     console.error('Error:', error);
     return new Response(
       JSON.stringify({ 
@@ -57,24 +71,15 @@ serve(async (req) => {
   }
 });
 
-let tokenCache = { token: null, expiresAt: 0 };
-
-async function fetchAccessToken() {
-  console.log('Getting Semoa access token...');
+// Endpoint de debug pour tester l'authentification uniquement
+async function debugSemoaAuth() {
+  console.log('=== DEBUG SEMOA AUTH START ===');
   
-  const now = Date.now();
-  if (tokenCache.token && tokenCache.expiresAt > now) {
-    console.log('Using cached token');
-    return tokenCache.token;
-  }
-
-  // Utiliser les secrets Supabase
   const SEMOA_CONFIG = {
-    client_id: Deno.env.get('SEMOA_CLIENT_ID') || 'cashpay',
-    client_secret: Deno.env.get('SEMOA_CLIENT_SECRET') || 'HpuNOm3sDOkAvd8v3UCIxiBu68634BBs',
-    username: Deno.env.get('SEMOA_USERNAME') || 'api_cashpay.corner',
-    password: Deno.env.get('SEMOA_PASSWORD') || 'qH5VlCDCa4',
-    apikey: Deno.env.get('SEMOA_API_KEY') || 'TjpiCTZANOmeTSW7eFUHvcoJdtMAwbzrXWyA',
+    client_id: 'cashpay',
+    client_secret: 'HpuNOm3sDOkAvd8v3UCIxiBu68634BBs',
+    username: 'api_cashpay.corner',
+    password: 'qH5VlCDCa4',
     baseUrl: 'https://api.semoa-payments.ovh/sandbox'
   };
   
@@ -88,8 +93,11 @@ async function fetchAccessToken() {
     password: SEMOA_CONFIG.password,
   });
 
-  console.log('Token request URL:', tokenUrl);
-  console.log('Auth params:', authParams.toString());
+  console.log('=== AUTH REQUEST DETAILS ===');
+  console.log('URL:', tokenUrl);
+  console.log('Method: POST');
+  console.log('Headers: Content-Type: application/x-www-form-urlencoded');
+  console.log('Body:', authParams.toString());
 
   try {
     const response = await fetch(tokenUrl, {
@@ -102,11 +110,215 @@ async function fetchAccessToken() {
       body: authParams.toString(),
     });
 
-    console.log('Token response status:', response.status);
-    console.log('Token response headers:', Object.fromEntries(response.headers.entries()));
+    console.log('=== AUTH RESPONSE DETAILS ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', Object.fromEntries(response.headers.entries()));
     
     const responseText = await response.text();
-    console.log('Token response:', responseText);
+    console.log('Response Body:', responseText);
+
+    let responseData = {};
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      responseData = { raw_response: responseText, parse_error: parseError.message };
+    }
+
+    const debugResult = {
+      request: {
+        url: tokenUrl,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: authParams.toString()
+      },
+      response: {
+        status: response.status,
+        statusText: response.statusText,
+        headers: Object.fromEntries(response.headers.entries()),
+        body: responseData
+      }
+    };
+
+    return new Response(JSON.stringify(debugResult, null, 2), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  } catch (error) {
+    console.error('=== AUTH ERROR ===');
+    console.error('Error:', error);
+    
+    const errorResult = {
+      error: true,
+      message: error.message,
+      stack: error.stack
+    };
+
+    return new Response(JSON.stringify(errorResult, null, 2), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+// Endpoint de debug pour tester le paiement
+async function debugSemoaPay() {
+  console.log('=== DEBUG SEMOA PAYMENT START ===');
+  
+  try {
+    // 1. D'abord obtenir le token
+    const authResult = await debugSemoaAuth();
+    const authData = await authResult.json();
+    
+    if (authData.error || !authData.response?.body?.access_token) {
+      return new Response(JSON.stringify({
+        error: true,
+        message: 'Failed to get auth token',
+        auth_result: authData
+      }, null, 2), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+      });
+    }
+
+    const token = authData.response.body.access_token;
+    
+    // 2. Maintenant tester le paiement
+    const paymentUrl = 'https://api.semoa-payments.ovh/sandbox/v1/payments';
+    const paymentData = {
+      phoneNumber: "22890112783",
+      amount: 1000,
+      currency: "XOF",
+      service: "T-MONEY"
+    };
+
+    console.log('=== PAYMENT REQUEST DETAILS ===');
+    console.log('URL:', paymentUrl);
+    console.log('Method: POST');
+    console.log('Headers: Authorization: Bearer [TOKEN], Content-Type: application/json');
+    console.log('Body:', JSON.stringify(paymentData));
+
+    const response = await fetch(paymentUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+        'Accept': 'application/json',
+        'User-Agent': 'Cornerstone-Briques/1.0',
+      },
+      body: JSON.stringify(paymentData),
+    });
+
+    console.log('=== PAYMENT RESPONSE DETAILS ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', Object.fromEntries(response.headers.entries()));
+    
+    const responseText = await response.text();
+    console.log('Response Body:', responseText);
+
+    let responseData = {};
+    try {
+      responseData = JSON.parse(responseText);
+    } catch (parseError) {
+      responseData = { raw_response: responseText, parse_error: parseError.message };
+    }
+
+    const debugResult = {
+      auth_step: {
+        success: true,
+        token_received: !!token
+      },
+      payment_step: {
+        request: {
+          url: paymentUrl,
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token.substring(0, 10)}...` // Masquer le token complet
+          },
+          body: paymentData
+        },
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          headers: Object.fromEntries(response.headers.entries()),
+          body: responseData
+        }
+      }
+    };
+
+    return new Response(JSON.stringify(debugResult, null, 2), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+
+  } catch (error) {
+    console.error('=== PAYMENT ERROR ===');
+    console.error('Error:', error);
+    
+    const errorResult = {
+      error: true,
+      message: error.message,
+      stack: error.stack
+    };
+
+    return new Response(JSON.stringify(errorResult, null, 2), {
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    });
+  }
+}
+
+let tokenCache = { token: null, expiresAt: 0 };
+
+async function fetchAccessToken() {
+  console.log('=== FETCHING ACCESS TOKEN ===');
+  
+  const now = Date.now();
+  if (tokenCache.token && tokenCache.expiresAt > now) {
+    console.log('Using cached token');
+    return tokenCache.token;
+  }
+
+  const SEMOA_CONFIG = {
+    client_id: Deno.env.get('SEMOA_CLIENT_ID') || 'cashpay',
+    client_secret: Deno.env.get('SEMOA_CLIENT_SECRET') || 'HpuNOm3sDOkAvd8v3UCIxiBu68634BBs',
+    username: Deno.env.get('SEMOA_USERNAME') || 'api_cashpay.corner',
+    password: Deno.env.get('SEMOA_PASSWORD') || 'qH5VlCDCa4',
+    baseUrl: 'https://api.semoa-payments.ovh/sandbox'
+  };
+  
+  const tokenUrl = `${SEMOA_CONFIG.baseUrl}/oauth/token`;
+  
+  const authParams = new URLSearchParams({
+    grant_type: 'password',
+    client_id: SEMOA_CONFIG.client_id,
+    client_secret: SEMOA_CONFIG.client_secret,
+    username: SEMOA_CONFIG.username,
+    password: SEMOA_CONFIG.password,
+  });
+
+  console.log('=== TOKEN REQUEST DETAILS ===');
+  console.log('URL:', tokenUrl);
+  console.log('Method: POST');
+  console.log('Headers: Content-Type: application/x-www-form-urlencoded');
+  console.log('Body:', authParams.toString());
+
+  try {
+    const response = await fetch(tokenUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+        'Accept': 'application/json',
+        'User-Agent': 'Cornerstone-Briques/1.0',
+      },
+      body: authParams.toString(),
+    });
+
+    console.log('=== TOKEN RESPONSE DETAILS ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', Object.fromEntries(response.headers.entries()));
+    
+    const responseText = await response.text();
+    console.log('Response Body:', responseText);
 
     if (!response.ok) {
       throw new Error(`Failed to get access token: ${response.status} - ${responseText}`);
@@ -136,19 +348,19 @@ async function fetchAccessToken() {
     console.log('Token cached successfully, expires in:', expiresIn);
     return token;
   } catch (error) {
-    console.error('Token request failed:', error);
+    console.error('=== TOKEN REQUEST FAILED ===');
+    console.error('Error:', error);
     throw new Error(`Authentication failed: ${error.message}`);
   }
 }
 
 async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) {
-  console.log('Creating Semoa payment:', { phoneNumber, amount, service });
+  console.log('=== CREATING SEMOA PAYMENT ===');
+  console.log('Payment params:', { phoneNumber, amount, service });
   
   const token = await fetchAccessToken();
   
-  const SEMOA_CONFIG = {
-    baseUrl: 'https://api.semoa-payments.ovh/sandbox'
-  };
+  const paymentUrl = 'https://api.semoa-payments.ovh/sandbox/v1/payments';
   
   const paymentData = {
     phoneNumber,
@@ -157,10 +369,14 @@ async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) 
     service
   };
 
-  console.log('Payment request data:', paymentData);
+  console.log('=== PAYMENT REQUEST DETAILS ===');
+  console.log('URL:', paymentUrl);
+  console.log('Method: POST');
+  console.log('Headers: Authorization: Bearer [TOKEN], Content-Type: application/json');
+  console.log('Body:', JSON.stringify(paymentData));
 
   try {
-    const response = await fetch(`${SEMOA_CONFIG.baseUrl}/v1/payments`, {
+    const response = await fetch(paymentUrl, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -171,11 +387,13 @@ async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) 
       body: JSON.stringify(paymentData),
     });
 
-    console.log('Payment response status:', response.status);
-    console.log('Payment response headers:', Object.fromEntries(response.headers.entries()));
+    console.log('=== PAYMENT RESPONSE DETAILS ===');
+    console.log('Status:', response.status);
+    console.log('Status Text:', response.statusText);
+    console.log('Headers:', Object.fromEntries(response.headers.entries()));
     
     const responseText = await response.text();
-    console.log('Payment response text:', responseText);
+    console.log('Response Body:', responseText);
 
     let responseData;
     try {
@@ -193,14 +411,16 @@ async function createSemoaPayment({ phoneNumber, amount, service = "T-MONEY" }) 
 
     return responseData;
   } catch (error) {
-    console.error('Payment request failed:', error);
+    console.error('=== PAYMENT REQUEST FAILED ===');
+    console.error('Error:', error);
     throw new Error(`Payment creation failed: ${error.message}`);
   }
 }
 
 async function initiatePayment(supabase: any, payload: any) {
   const { amount, phone_number, payment_method, order_summary, user_id } = payload;
-  console.log('Initiating payment with:', { amount, phone_number, payment_method });
+  console.log('=== INITIATING PAYMENT ===');
+  console.log('Payment details:', { amount, phone_number, payment_method });
 
   try {
     // Enregistrer la transaction dans la base de données
@@ -327,7 +547,8 @@ async function initiatePayment(supabase: any, payload: any) {
     );
 
   } catch (error) {
-    console.error('Payment error:', error);
+    console.error('=== PAYMENT INITIATION ERROR ===');
+    console.error('Error:', error);
     
     return new Response(
       JSON.stringify({ 
@@ -344,7 +565,8 @@ async function initiatePayment(supabase: any, payload: any) {
 }
 
 async function checkPaymentStatus(supabase: any, transactionId: string) {
-  console.log('Checking payment status for:', transactionId);
+  console.log('=== CHECKING PAYMENT STATUS ===');
+  console.log('Transaction ID:', transactionId);
 
   try {
     const { data: transaction, error } = await supabase
@@ -368,8 +590,6 @@ async function checkPaymentStatus(supabase: any, transactionId: string) {
       );
     }
 
-    // Si on a un transaction_id Semoa, on peut potentiellement vérifier le statut
-    // Pour l'instant, on retourne juste le statut local
     return new Response(
       JSON.stringify({ 
         success: true,
@@ -382,7 +602,8 @@ async function checkPaymentStatus(supabase: any, transactionId: string) {
     );
     
   } catch (error) {
-    console.error('Status check error:', error);
+    console.error('=== STATUS CHECK ERROR ===');
+    console.error('Error:', error);
     return new Response(
       JSON.stringify({ 
         success: false,
