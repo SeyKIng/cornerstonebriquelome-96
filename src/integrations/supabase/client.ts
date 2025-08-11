@@ -2,10 +2,16 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types';
 
-const SUPABASE_URL = "https://dcjrluhpssryrhygmobr.supabase.co";
-const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRjanJsdWhwc3NyeXJoeWdtb2JyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDg5NzUwNTMsImV4cCI6MjA2NDU1MTA1M30.hDvZSWPaO9u0HXXBE_BhD6N_gI1T9I3aH0bQffMPYZg";
+const SUPABASE_URL = "https://nbjrsrerfcoueonebktu.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5ianJzcmVyZmNvdWVvbmVia3R1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQ4NjEyNjQsImV4cCI6MjA3MDQzNzI2NH0.7eU9ipZYFJfc7WEmrziTwqBjbue7WekgwZ-0m13iWXo";
 
 // Import the supabase client like this:
 // import { supabase } from "@/integrations/supabase/client";
 
-export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY);
+export const supabase = createClient<Database>(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: {
+    storage: localStorage,
+    persistSession: true,
+    autoRefreshToken: true,
+  }
+});
